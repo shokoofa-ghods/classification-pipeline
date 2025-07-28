@@ -1,0 +1,18 @@
+{   
+    "file_address": "/home/shokoo/EchoView/view_classification",
+    "data_address": "/home/shokoo/EchoView/Datasets/data_split/",
+    "train": "csv_files/train_original.csv",
+    "eval": "csv_files/val_original.csv",
+    "test": "csv_files/test_original.csv",
+    "data_mean": "[0.0847569 , 0.08113708, 0.08339239]",
+    "data_std": "[0.0847569 , 0.08113708, 0.08339239]",
+    "verbose": true,
+    "plot": true,
+    "tensorboard": false,
+    "lr": 0.001,
+    "epochs": 1,
+    "batch_size": 32,
+    "loss_limit": 4,
+    "after_n_epochs" : 5,
+    "multiframe": true
+}
