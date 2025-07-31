@@ -12,7 +12,6 @@ from torch.utils.data import DataLoader
 from datetime import datetime
 import copy
 
-from common.constant import VIEW_MAP
 from utils import show_confusion_matrix
 
 
@@ -32,15 +31,15 @@ model_type = {
     'feature_channels': 512 },
 
     'convnext_small':
-    {'backbone': 'convnext_small', # 4  # only supported by CNN_CBAM and MultiViewClassifier
+    {'backbone': 'convnext_small', # 4  
      'feature_channels': 768 },
 
     'convnext_base': 
-    {'backbone': 'convnext_base', # 5  # only supported by CNN_CBAM and MultiViewClassifier
+    {'backbone': 'convnext_base', # 5  
      'feature_channels': 1024 },
 
     'coatnet':
-    {'backbone': 'coatnet_0_rw_224.sw_in1k', # 6  # only supported by CNN_CBAM and MultiViewClassifier
+    {'backbone': 'coatnet_0_rw_224.sw_in1k', # 6  
      'feature_channels': 768 },
 }
 
@@ -110,7 +109,6 @@ class Trainer:
         confidences = []
         total_correct = 0
         total_loss = 0
-        # BATCH_SIZE = 64
         total = 0
         for enum, (images, labels) in enumerate(loader):
             print(f'{mode} {f"epoch {epoch + 1}/{self.epochs}" if epoch is not None else ""} '
@@ -160,6 +158,7 @@ class Trainer:
                  train_loader:DataLoader,
                  val_loader:DataLoader,
                  save_dir:str,
+                 VIEW_MAP:list,
                  verbose:bool=True,
                  tensorboard:bool=False,
                  backbone_freeze:bool=False,
@@ -180,13 +179,17 @@ class Trainer:
                       end='')
                 images = images.to(self.device)
                 labels = labels.to(self.device).squeeze()
-                new_labels = torch.tensor([model.view_id_to_group_idx[v.item()] for v in labels], device=self.device)
-
-
                 optimizer.zero_grad()
-                outputs = model(images)
 
-                loss = self.criterion(outputs, new_labels)
+                if  model.__class__.__name__.startswith('Multi'):
+                    alpha = 0.25
+                    group_labels = torch.tensor([model.view_id_to_group_idx2[v.item()] for v in labels], device=self.device)
+                    outputs, group_outputs = model(images)
+                    loss = (alpha) * self.criterion(outputs, labels) + (1 - alpha) * self.criterion(group_outputs, group_labels)
+                else:
+                    outputs = model(images)
+                    loss = self.criterion(outputs, labels)
+            
                 loss.backward()
                 nn.utils.clip_grad_norm_(model.parameters(), max_norm=1)
                 optimizer.step()
@@ -195,7 +198,7 @@ class Trainer:
                 _, predictions = outputs.max(1)
 
                 running_loss += loss.item() * images.size(0)
-                running_corrects += (predictions == new_labels).sum()
+                running_corrects += (predictions == labels).sum()
 
             epoch_loss = running_loss / total
             epoch_acc = running_corrects / total
@@ -236,8 +239,7 @@ class Trainer:
                 'num_classes': f'{len(VIEW_MAP)}',
                 'accuracyOnVal' : round(best_val_acc.item(),3),
                 'date': str(datetime.now()).split('.')[0],
-                'state_dict': model.state_dict(),
-                'model' : best_model,
+                'state_dict': best_model.state_dict(),
                 }, os.path.join(save_dir, f'model_{model.__class__.__name__}-bb_({model.backbone_type})+({model.temporal_type})-nclasses_{len(VIEW_MAP)}-acc_{round(best_val_acc.item(),3)}-{str(datetime.now()).split(".")[0]}.pth'))
                 show_confusion_matrix(eval_dict['true_labels'], eval_dict['predicted'], save_dir, False, epoch)
                 
