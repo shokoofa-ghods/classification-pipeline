@@ -9,6 +9,7 @@ import numpy as np
 import torch
 import torchvision.transforms.functional as TF
 from torchvision.transforms import transforms
+from torchvision.transforms import v2
 from PIL import Image
 from torch import nn
 import kornia.augmentation as K
@@ -199,3 +200,14 @@ video_augs = [
 ]
 
 video_aug_pipeline = VideoAugmentation(video_augs, num_select=5)
+
+
+image_aug_pipeline = nn.Sequential(
+    v2.RandomHorizontalFlip(p=0.1),
+    v2.RandomVerticalFlip(p=0.2),
+    v2.RandomRotation(degrees=10),
+    transforms.RandomApply([v2.ColorJitter(brightness=0.1, contrast=0.1)], p=0.2),
+    transforms.RandomApply([transforms.RandomAffine(degrees=0, translate=(0.05, 0.05), scale=(0.95, 1.05))], p=0.2),
+    transforms.RandomErasing(p=0.2),
+    transforms.RandomApply([AddGaussianNoise(0., 0.1)], p= 0.2)
+)
