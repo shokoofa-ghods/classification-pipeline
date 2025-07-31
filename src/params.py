@@ -34,6 +34,8 @@ class Params:
     base_model:str
     data_mean:list
     data_std:list
+    combine_list:list
+    VIEW_MAP:list
 
     def __str__(self):
         return str(vars(self)).replace(', ', ',\n')
@@ -55,7 +57,12 @@ _DEFAULT_PARAMS = {
     'batch_size': 32,
     'base_model': '',
     'data_mean' : [0.05, 0.05, 0.05],
-    'data_std' : [0.05, 0.05, 0.05]
+    'data_std' : [0.05, 0.05, 0.05],
+    'combine_list' : {},
+    'VIEW_MAP' : ['PLAX', 'PSAX-ves', 'PSAX-sub', 
+                'Apical-2ch', 'Apical-3ch', 'Apical-4ch',
+                'Apical-5ch', 'Suprasternal', 'Subcostal',
+                'Other', 'PLAX-inflow', 'PLAX-outflow', 'Contrast',]
 }
 
 class ParamBuilder:
@@ -102,6 +109,8 @@ class ParamBuilder:
                       base_model=self['base_model'],
                       data_mean=ast.literal_eval(self['data_mean']),
                       data_std=ast.literal_eval(self['data_std']),
+                      VIEW_MAP= self['VIEW_MAP'],
+                      combine_list=self['combine_list']
                     )
 
     def set(self, override:bool=True, **kwargs):
