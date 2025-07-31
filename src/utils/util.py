@@ -101,3 +101,29 @@ def return_last_file(path:str):
 def log(*args, **kwargs):
     # if params.verbose:
     print(*args, **kwargs)
+
+def modify_view_map(info_train, info_val, info_test, combine_list ):
+    """
+    Modifies list of view labels for train, val, and test dfs by combining views specified in seperated dictionaries listed in combine_list
+    
+    Args:
+        info_train (DataFrame): Data Info of Train
+        info_val (DataFrame): Data Info of Val
+        info_test (DataFrame): Data Info of Test
+        combine_list (list[dict]): list of dictionaries, each ditionary's key is the combined view name and value is the detailed view names to be combined
+    Returns:
+        info_train (DataFrame): Updated View Mapping of Train Data
+        info_val (DataFrame): Updated View Mapping of Val Data
+        info_test (DataFrame): Updated View Mapping Test Data
+    """
+
+    for combine_dictionary in combine_list:
+        original_view = list(combine_dictionary.values())[0]
+        combine_view = list(combine_dictionary.keys())[0]
+        info_train.loc[info_train['label'].isin(original_view), 'label'] = combine_view
+        info_val.loc[info_val['label'].isin(original_view), 'label'] = combine_view
+        info_test.loc[info_test['label'].isin(original_view), 'label'] = combine_view
+        
+    return info_train, info_val, info_test
+
+        
