@@ -8,10 +8,39 @@ import torch
 import timm
 
 from common.constant import (INITIAL_LABELS,
-                            COMBINED_VIEW_MAP,
-                            VIEW_MAP)
+                            COMBINED_VIEW_MAP)
 
-NUM_CLASSES = len(VIEW_MAP) #8
+# NUM_CLASSES = len(VIEW_MAP) #8
+
+
+class Backbone_features(nn.Module):
+    def __init__(self, backbone_type):
+        super(Backbone_features, self).__init__()
+        self.backbone_type = backbone_type
+
+        if self.backbone_type.startswith('resnet18'):
+            backbone = torchvision.models.resnet18(weights='DEFAULT')
+            self.features = nn.Sequential(*list(backbone.children())[:-2])
+
+        elif self.backbone_type.startswith('efficientnet-b0'):
+            backbone = torchvision.models.efficientnet_b0(weights='DEFAULT')
+            self.features = backbone.features
+
+        elif self.backbone_type.startswith('convnext'):
+            backbone = getattr(torchvision.models, self.backbone_type)(weights='IMAGENET1K_V1')
+            self.features = backbone.features
+
+        elif self.backbone_type.startswith('efficientnet-b2'): # EfficientNet-B2 is Default
+            backbone = torchvision.models.efficientnet_b2(weights='DEFAULT')
+            self.features = backbone.features
+            # for module in self.conv.features:
+            #     if isinstance(module, torch.nn.modules.container.Sequential):
+            #         module.append(torch.nn.Dropout(0.4))
+
+        else:  
+            backbone = timm.create_model(self.backbone_type, pretrained=True, features_only=True) ## gets 224x224
+            self.features = backbone.features
+        
 
 
 # Two Stage View Classifier Model
@@ -53,64 +82,47 @@ class MultiHeadClassifier(nn.Module):
 # ------------ Full Model ------------ #
 class MultiViewClassifier(nn.Module):
 
-    def __init__(self, model_type):
+    def __init__(self, model_type, NUM_CLASSES):
         super().__init__()
 
         self.view_to_group = {
         0: 'other',    # PLAX
-        1: 'other',    # PSAX-ves
+        1: 'psax',    # PSAX-ves
         2: 'psax',     # PSAX-sub
         3: 'apical',   # Apical-2ch
         4: 'apical',   # Apical-3ch
-        5: 'apical',   # Apical-4&5ch
-        6: 'other',   # Suprasternal
-        7: 'other',    # Subcostal
+        5: 'apical',   # Apical-4ch
+        6: 'apical',   # Apical-5ch
+        7: 'other',   # Suprasternal
+        8: 'other',    # Subcostal
         }
 
         self.group_to_labels = {
-            'apical': [3,4,5],
-            'psax': [2],
-            'other': [0,1,6,7],
+            'apical': [3,4,5,6],
+            'psax': [2,1],
+            'other': [0,8,7],
         }
 
         self.backbone_type = model_type['backbone']
         self.feature_channels = model_type['feature_channels']
         self.temporal_type = ''
 
-        if self.backbone_type.startswith('convnext'):
-            base_model = getattr(torchvision.models, self.backbone_type)(weights='IMAGENET1K_V1')
+        self.backbone = Backbone_features(backbone_type=self.backbone_type)
 
-        elif self.backbone_type.startswith('resnet18'):
-            base_model = torchvision.models.resnet18(weights='DEFAULT')
-            self.features = nn.Sequential(*list(base_model.children())[:-2])
-
-        elif self.backbone_type.startswith('efficientnet-b0'):
-            backbone = torchvision.models.efficientnet_b0(weights='DEFAULT')
-
-        elif self.backbone_type.startswith('efficientnet-b2'):
-            base_model = torchvision.models.efficientnet_b2(weights='DEFAULT')
-            
-        else:
-            base_model = timm.create_model(self.backbone_type, pretrained=True, features_only=True) ## gets 224x224
-
-        self.features = nn.Sequential(base_model.features, nn.AdaptiveAvgPool2d((1, 1)))
+        self.spatial_pool =  nn.AdaptiveAvgPool2d((4, 4))
         self.flatten = nn.Flatten()
-        self.router = Router(feature_dim=self.feature_channels, group_to_labels=self.group_to_labels)
-        self.multihead = MultiHeadClassifier(feature_dim=self.feature_channels, group_to_labels=self.group_to_labels)
+        self.router = Router(feature_dim=self.feature_channels * 4 * 4 , group_to_labels=self.group_to_labels)
+        self.multihead = MultiHeadClassifier(feature_dim=self.feature_channels * 4 * 4, group_to_labels=self.group_to_labels)
         self.view_id_to_group_idx2 = {
             view_id: self.router.group_names2.index(self.view_to_group[view_id])
             for view_id in range(NUM_CLASSES)
         }
-        self.group_names = VIEW_MAP #['plax', 'psax-ves', 'psax-sub', 'apical-2ch', 'apical-3ch', 'apical-4&5ch', 'suprasternal', 'subcostal']
-        self.view_id_to_group_idx = {
-            view_id: self.group_names.index(COMBINED_VIEW_MAP[view_id])
-            for view_id in range(len(INITIAL_LABELS)) #11
-        }
 
 
     def forward(self, x):
-        x = self.features(x)  # (B, 768, 1, 1)
-        x = self.flatten(x)   # (B, 768)
+        x = self.backbone.features(x)  # (B, 768, 10, 10)
+        x = self.spatial_pool(x) #(B, 768, 4, 4)
+        x = self.flatten(x)   # (B, 4 * 4 * 768)
         group_logits = self.router(x)
         group_probs = torch.softmax(group_logits, dim=1)
         view_logits = self.multihead(x, group_probs)
@@ -172,33 +184,14 @@ class CBAM(nn.Module):
         return x
 
 class CNN_CBAM(nn.Module):
-    def __init__(self, model_type ):
+    def __init__(self, model_type, NUM_CLASSES):
         super(CNN_CBAM, self).__init__()
 
         self.backbone_type = model_type['backbone']
         self.feature_channels = model_type['feature_channels']
         self.temporal_type = ''
 
-        self.group_names = VIEW_MAP #['plax', 'psax-ves', 'psax-sub', 'apical-2ch', 'apical-3ch', 'apical-4&5ch', 'suprasternal', 'subcostal']
-        self.view_id_to_group_idx = {
-            view_id: self.group_names.index(COMBINED_VIEW_MAP[view_id])
-            for view_id in range(len(INITIAL_LABELS)) #11
-        }
-
-        if self.backbone_type.startswith('convnext'):
-            base_model = getattr(torchvision.models, self.backbone_type)(weights='IMAGENET1K_V1')
-            self.features = base_model.features
-            # self.feature_channels = 768 # small 768 # base 1024
-
-        elif self.backbone_type.startswith('efficientnet-b2'):
-            base_model = torchvision.models.efficientnet_b2(weights='DEFAULT')
-            self.features = base_model.features
-            # self.feature_channels = 1408
-            
-        else:
-            base_model = timm.create_model(self.backbone_type, pretrained=True, features_only=True) ## gets 224x224
-            self.features = base_model
-            self.feature_channels = base_model.feature_info[-1]['num_chs']
+        self.backbone = Backbone_features(backbone_type=self.backbone_type)
 
         self.dropout2d = nn.Dropout2d(p=0.2)
 
@@ -212,11 +205,7 @@ class CNN_CBAM(nn.Module):
         )
 
     def forward(self, x):
-        if isinstance(self.features, nn.Sequential ):
-            x = self.features(x)
-        else:
-            x = self.features(x)[-1]
-
+        x = self.backbone.features(x)
         x = self.dropout2d(x)
         # x = self.cbam(x)
         x = self.classifier(x)
