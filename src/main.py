@@ -17,7 +17,9 @@ from matplotlib.axes import Axes
 
 # pylint is unable to resolve the imports but they should be fine
 from data import (video_aug_pipeline,
-                    CustomDataset
+                  image_aug_pipeline,
+                  CustomDatasetImg,
+                  CustomDatasetVideo
                 )
 from common.constant import VIEW_MAP
                  # pylint: disable=import-error
@@ -27,7 +29,8 @@ from utils import (normalized_img_visualization,
                    show_distribution,
                    assert_exists,
                    assert_is_file,
-                   assert_is_dir)               # pylint: disable=import-error
+                   assert_is_dir,
+                   modify_view_map)               # pylint: disable=import-error
 from models import (TransformerBased_video,
                     Spatial_Temporal,
                     MultiViewClassifier,
@@ -64,7 +67,7 @@ def main() -> int:
         if params.verbose:
             print(*args, **kwargs)
 
-    log('params:', params, sep='\n')
+    # log('params:', params, sep='\n')
 
     # Paths to csv files
     train_path = os.path.join(params.file_address, params.train_info_csv)
@@ -103,7 +106,7 @@ def main() -> int:
                 'false_pos': 0,
                 'true_neg': 0,
                 'false_neg': 0
-            } for key in VIEW_MAP
+            } for key in params.VIEW_MAP
         }
         # Consider moving to train to save computation
         for i in range(len(epoch.eval['indices'])):
@@ -119,7 +122,7 @@ def main() -> int:
                     else:
                         res[label]['true_neg'] += 1
         run_f1 = 0
-        for label, _ in enumerate(VIEW_MAP):
+        for label, _ in enumerate(params.VIEW_MAP):
             all_pos = res[label]['true_pos'] + res[label]['false_neg']
             labeled_pos = res[label]['true_pos'] + res[label]['false_pos']
             recall = res[label]['true_pos'] / (all_pos + eps)
@@ -132,7 +135,7 @@ def main() -> int:
         writer.add_scalar('Loss', epoch.loss, epoch.num)
         writer.add_scalar('Accuracy', epoch.acc, epoch.num)
         writer.add_scalar('Accuracy', epoch.acc, epoch.num)
-        writer.add_scalar('Average_F1', run_f1 / len(VIEW_MAP), epoch.num)
+        writer.add_scalar('Average_F1', run_f1 / len(params.VIEW_MAP), epoch.num)
     
     # Number of all samples per patients
     paths = glob.glob(os.path.join(params.data_address + '**/*/*', '*'))
@@ -142,39 +145,62 @@ def main() -> int:
     info_train = pd.read_csv(train_path)
     info_val = pd.read_csv(val_path)
     info_test = pd.read_csv(test_path)
+    log("Labels BEFORE Filter: ", info_test.label.unique())
 
-    log("Labels: ", info_test.label.unique())
+    info_train, info_val, info_test = modify_view_map(info_train, info_val, info_test, params.combine_list)
 
-    # Datasets
-    # TODO: adjust the frame size
-    frames = 3 if params.is_multiframe else 1
+    log("Labels AFTER Filter: ", info_test.label.unique())
 
 
+    # Save Data
     subdir = 'src/saved_models/multiframe' if params.is_multiframe else 'src/saved_models/singleframe'
     save_dir_parent = os.path.join(params.file_address, subdir)
     assert_exists(save_dir_parent)
     save_dir = os.path.join(save_dir_parent, str(return_last_file(save_dir_parent)))
     os.makedirs(save_dir, exist_ok=True)
 
-    train_data = CustomDataset(info_train,
-                               params.data_address,
-                               params.data_mean,
-                               params.data_std,
-                               use_npy=False,
-                               remove_ecg=True,
-                               remove_static=True,
-                               video_pipeline=params.is_multiframe,
-                               transform=video_aug_pipeline,
-                               )
-    val_data = CustomDataset(info_val,
-                            params.data_address,
-                            params.data_mean,
-                            params.data_std,
-                            use_npy=False,
-                            remove_ecg=True,
-                            remove_static=True,
-                            video_pipeline=params.is_multiframe,
-                            )
+    # VIDEO_BASED
+    if params.is_multiframe: 
+        train_data = CustomDatasetVideo(info_train,
+                                params.data_address,
+                                params.VIEW_MAP,
+                                params.data_mean,
+                                params.data_std,
+                                use_npy=False,
+                                remove_ecg=True,
+                                remove_static=True,
+                                VIEW_MAP =params.VIEW_MAP
+                                )
+        val_data = CustomDatasetVideo(info_val,
+                                params.data_address,
+                                params.VIEW_MAP,
+                                params.data_mean,
+                                params.data_std,
+                                use_npy=False,
+                                remove_ecg=True,
+                                remove_static=True,
+                                )
+    # IMAGE_BASED
+    else:
+        train_data = CustomDatasetImg(info_train,
+                                params.data_address,
+                                params.VIEW_MAP,
+                                params.data_mean,
+                                params.data_std,
+                                use_npy=False,
+                                remove_ecg=True,
+                                remove_static=True,
+                                )
+        val_data = CustomDatasetImg(info_val,
+                                params.data_address,
+                                params.VIEW_MAP,
+                                params.data_mean,
+                                params.data_std,
+                                use_npy=False,
+                                remove_ecg=True,
+                                remove_static=True,
+                                )
+        
     # Test visualize
     if params.plot:
         log('Data Distribution')
@@ -186,7 +212,7 @@ def main() -> int:
             for i in range(5): #at least 5 frames will be in multiframe
                 normalized_img_visualization(dt[i,:,:], lb, save_dir,i, params.data_mean, params.data_std)
         else:
-            normalized_img_visualization(dt[i,:,:], lb, save_dir,0, params.data_mean, params.data_std)
+            normalized_img_visualization(dt[0,:,:], lb, save_dir,0, params.data_mean, params.data_std)
 
     # Data Loaders
     log('Initializing Data Loaders')
@@ -204,24 +230,22 @@ def main() -> int:
                             pin_memory=True,
                             num_workers=4,
                             persistent_workers=True)
-    # if params.verbose:
-    #     log('test read')
-    #     for img, _ in train_loader:
-    #         log(img.shape)
-    #         break
+    if params.verbose:
+        log('test read')
+        for img, _ in train_loader:
+            log(img.shape)
+            break
 
     log('Initializing Model')
     # Model Initialization
     
-    if params.is_multiframe:
-        backbone_model_options = ['efficientnet-b2', 'efficientnet-b0', 'resnet18']  
-        # Model Names : TransformerBased_video, Spatial_Temporal, VideoCNNLSTM
-    else:
-        backbone_model_options = ['efficientnet-b2', 'efficientnet-b0', 'resnet18', 'convnext_small', 'convnext_base', 'coatnet']
-        # Model Names :  MultiViewClassifier, CNN_CBAM,
 
-    model_type_dict = model_type[backbone_model_options[1]]
-    model = TransformerBased_video(model_type_dict)
+    # Backbone Names : 'efficientnet-b2', 'efficientnet-b0', 'resnet18', 'convnext_small', 'convnext_base', 'coatnet'
+    # Model Names : (video) TransformerBased_video, Spatial_Temporal, VideoCNNLSTM, (image) MultiViewClassifier, CNN_CBAM,
+    
+
+    model_type_dict = model_type['resnet18']
+    model = CNN_CBAM(model_type_dict, len(params.VIEW_MAP))
 
     if params.base_model:
         print(f'Loading Model from "{params.base_model}"')
@@ -230,7 +254,7 @@ def main() -> int:
     # # Test model
     # if params.verbose:
     #     model.eval()
-    #     log(model(torch.rand(8, 1, 3, 299, 299)))
+    #     log(model(torch.rand(8, 3, 299, 299))[0].shape)
 
     # Set device
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
@@ -265,7 +289,9 @@ def main() -> int:
                            train_loader,
                            val_loader,
                            save_dir,
-                           verbose=params.verbose)
+                           params.VIEW_MAP,
+                           verbose=params.verbose
+                           )
     
     show_learning_curve(accs=_accs, losses=_losses, dir=save_dir)   
 
